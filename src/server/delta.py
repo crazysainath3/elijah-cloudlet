@@ -426,7 +426,7 @@ class Recovered_delta(multiprocessing.Process):
     def __init__(self, base_disk, base_mem, overlay_path, 
             output_mem_path, output_mem_size, 
             output_disk_path, output_disk_size, chunk_size,
-            out_pipe=None, time_queue=None):
+            out_file=None, time_queue=None):
         # recover delta list using base disk/memory
         # You have to specify parent to indicate whether you're recover memory or disk 
         # optionally you can use overlay_memory to recover overlay disk which is
@@ -440,7 +440,7 @@ class Recovered_delta(multiprocessing.Process):
         self.output_mem_size = output_mem_size
         self.output_disk_path = output_disk_path
         self.output_disk_size = output_disk_size
-        self.out_pipe = out_pipe
+        self.out_file = out_file
         self.time_queue = time_queue
         self.base_disk = base_disk
         self.base_mem = base_mem
@@ -501,7 +501,7 @@ class Recovered_delta(multiprocessing.Process):
                 self.recover_mem_fd.flush()
                 self.recover_disk_fd.flush()
 
-                self.out_pipe.send(overlay_chunk_ids)
+                #self.out_pipe.send(overlay_chunk_ids)
                 count += len(overlay_chunk_ids)
                 overlay_chunk_ids[:] = []
 
@@ -509,8 +509,8 @@ class Recovered_delta(multiprocessing.Process):
             self.out_pipe.send(overlay_chunk_ids)
             count += len(overlay_chunk_ids)
 
-        self.out_pipe.send(Recovered_delta.END_OF_PIPE)
-        self.out_pipe.close()
+        #self.out_pipe.send(Recovered_delta.END_OF_PIPE)
+        #self.out_pipe.close()
         self.recover_mem_fd.close()
         self.recover_disk_fd.close()
         end_time = time.time()

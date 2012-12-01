@@ -69,7 +69,7 @@ def recv_all(request, size):
         data += request.recv(size - len(data))
     return data
 
-def network_worker(handler, overlay_urls, overlay_urls_size, demanding_queue, out_queue, time_queue, chunk_size):
+def network_worker(handler, overlay_urls, overlay_urls_size, demanding_queue, out_path, time_queue, chunk_size):
     read_stream = handler.rfile
     start_time= time.time()
     total_read_size = 0
@@ -80,6 +80,7 @@ def network_worker(handler, overlay_urls, overlay_urls_size, demanding_queue, ou
     MAX_REQUEST_SIZE = 1024*512 # 512 KB
     out_of_order_count = 0
     total_urls_count = len(overlay_urls)
+    output_file = open(out_path, "w+b")
     while len(finished_url) < total_urls_count:
 
         #request to client until it becomes more than MAX_REQUEST_SIZE
@@ -130,7 +131,7 @@ def network_worker(handler, overlay_urls, overlay_urls_size, demanding_queue, ou
             chunk = read_stream.read(read_min_size)
             read_size = len(chunk)
             if chunk:
-                out_queue.put(chunk)
+                output_file.write(chunk)
             else:
                 break
 
@@ -140,7 +141,7 @@ def network_worker(handler, overlay_urls, overlay_urls_size, demanding_queue, ou
         index += 1
         #print "received %s(%d)" % (blob_url, blob_size)
 
-    out_queue.put(Server_Const.END_OF_FILE)
+    output_file.close()
     end_time = time.time()
     time_delta= end_time-start_time
 
@@ -164,31 +165,29 @@ def network_worker(handler, overlay_urls, overlay_urls_size, demanding_queue, ou
                 counter, total_read_size)
 
 
-def decomp_worker(in_queue, pipe_filepath, time_queue, temp_overlay_file=None):
+def decomp_worker(in_path, out_path, time_queue, temp_overlay_file=None):
     start_time = time.time()
+    in_file = open(in_path, "rb")
+    out_file = open(out_path, "w+b")
     data_size = 0
     counter = 0
     decompressor = LZMADecompressor()
-    pipe = open(pipe_filepath, "w")
 
     while True:
-        chunk = in_queue.get()
-        if chunk == Server_Const.END_OF_FILE:
+        chunk = in_file.read(Server_Const.TRANSFER_SIZE)
+        if not chunk:
             break
         data_size = data_size + len(chunk)
         decomp_chunk = decompressor.decompress(chunk)
 
-        in_queue.task_done()
-        pipe.write(decomp_chunk)
+        out_file.write(decomp_chunk)
         if temp_overlay_file:
             temp_overlay_file.write(decomp_chunk)
         counter = counter + 1
 
-    decomp_chunk = decompressor.flush()
-    pipe.write(decomp_chunk)
-    pipe.close()
+    in_file.close()
+    out_file.close()
     if temp_overlay_file:
-        temp_overlay_file.write(decomp_chunk)
         temp_overlay_file.close()
 
     end_time = time.time()
@@ -352,48 +351,44 @@ class SynthesisTCPHandler(SocketServer.StreamRequestHandler):
 
         # overlay
         demanding_queue = Queue()
-        download_queue = JoinableQueue()
+        download_file = NamedTemporaryFile(prefix="download-").name
+        decomp_file = NamedTemporaryFile(prefix="decomp-").name
         download_process = Process(target=network_worker, 
                 args=(
                     self,
                     overlay_urls, overlay_urls_size, demanding_queue, 
-                    download_queue, time_transfer, Server_Const.TRANSFER_SIZE, 
+                    download_file, time_transfer, Server_Const.TRANSFER_SIZE, 
                     )
                 )
         decomp_process = Process(target=decomp_worker,
                 args=(
-                    download_queue, overlay_pipe, time_decomp, temp_overlay_file,
+                    download_file, decomp_file, time_decomp, temp_overlay_file,
                     )
                 )
         modified_img, modified_mem, fuse, delta_proc, fuse_thread = \
-                cloudlet.recover_launchVM(base_path, meta_info, overlay_pipe, 
+                cloudlet.recover_launchVM(base_path, meta_info, decomp_file, 
                         log=sys.stdout, demanding_queue=demanding_queue)
         delta_proc.time_queue = time_delta
         fuse_thread.time_queue = time_fuse
+
+        # start processes
+        download_process.start()
+        download_process.join()
+        decomp_process.start()
+        decomp_process.join()
+        delta_proc.start()
+        delta_proc.join()
+        #fuse_thread.start()
 
         # resume VM
         resumed_VM = cloudlet.ResumedVM(modified_img, modified_mem, fuse)
         time_start_resume = time.time()
         resumed_VM.start()
-        time_end_resume = time.time()
-
-        # start processes
-        download_process.start()
-        decomp_process.start()
-        delta_proc.start()
-        fuse_thread.start()
-
-        # --> early success return
-
-        # return success after resuming VM
-        # before receiving all chunks
         resumed_VM.join()
+        time_end_resume = time.time()
         self.ret_success()
 
 
-
-
-        fuse_thread.join()
         end_time = time.time()
         total_time = (end_time-start_time)
 
@@ -459,7 +454,7 @@ class SynthesisTCPHandler(SocketServer.StreamRequestHandler):
         transfer_time = time_transfer.get()
         decomp_time = time_decomp.get()
         delta_time = time_delta.get()
-        fuse_time = time_fuse.get()
+        #fuse_time = time_fuse.get()
         transfer_start_time = transfer_time['start_time']
         transfer_end_time = transfer_time['end_time']
         transfer_bw = transfer_time.get('bw_mbps', -1)
@@ -467,12 +462,12 @@ class SynthesisTCPHandler(SocketServer.StreamRequestHandler):
         decomp_end_time = decomp_time['end_time']
         delta_start_time = delta_time['start_time']
         delta_end_time = delta_time['end_time']
-        fuse_start_time = fuse_time['start_time']
-        fuse_end_time = fuse_time['end_time']
+        #fuse_start_time = fuse_time['start_time']
+        #fuse_end_time = fuse_time['end_time']
 
         transfer_diff = (transfer_end_time-transfer_start_time)
         decomp_diff = (decomp_end_time-transfer_end_time)
-        delta_diff = (fuse_end_time-decomp_end_time)
+        delta_diff = (delta_end_time-decomp_end_time)
 
         message = "\n"
         message += "Pipelined measurement\n"

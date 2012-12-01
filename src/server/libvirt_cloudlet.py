@@ -598,8 +598,8 @@ def recover_launchVM(base_image, meta_info, overlay_file, **kwargs):
     for each_file in meta_info[Const.META_OVERLAY_FILES]:
         memory_chunks = each_file[Const.META_OVERLAY_FILE_MEMORY_CHUNKS]
         disk_chunks = each_file[Const.META_OVERLAY_FILE_DISK_CHUNKS]
-        memory_chunk_list.extend(["%ld:0" % item for item in memory_chunks])
-        disk_chunk_list.extend(["%ld:0" % item for item in disk_chunks])
+        memory_chunk_list.extend(["%ld:1" % item for item in memory_chunks])
+        disk_chunk_list.extend(["%ld:1" % item for item in disk_chunks])
     disk_overlay_map = ','.join(disk_chunk_list)
     memory_overlay_map = ','.join(memory_chunk_list)
 
@@ -615,8 +615,7 @@ def recover_launchVM(base_image, meta_info, overlay_file, **kwargs):
     pipe_parent, pipe_child = Pipe()
     delta_proc = delta.Recovered_delta(base_image, base_mem, overlay_file, \
             modified_mem.name, vm_memory_size, 
-            modified_img.name, vm_disk_size, Const.CHUNK_SIZE, 
-            out_pipe=pipe_child)
+            modified_img.name, vm_disk_size, Const.CHUNK_SIZE)
     fuse_thread = vmnetfs.FuseFeedingThread(fuse, 
             pipe_parent, delta.Recovered_delta.END_OF_PIPE)
     return [modified_img.name, modified_mem.name, fuse, delta_proc, fuse_thread]
